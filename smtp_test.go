@@ -62,7 +62,6 @@ testLoop:
 }
 
 func TestAuthPlain(t *testing.T) {
-
 	tests := []struct {
 		authName string
 		server   *serverInfo
@@ -97,7 +96,6 @@ func TestAuthPlain(t *testing.T) {
 }
 
 func TestAuthLogin(t *testing.T) {
-
 	tests := []struct {
 		authName string
 		server   *serverInfo
@@ -144,7 +142,7 @@ func TestClientAuthTrimSpace(t *testing.T) {
 		strings.NewReader(server),
 		&wrote,
 	}
-	c, err := newClient(fake, "fake.host")
+	c, err := newClient(fake, "fake.host", nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -311,14 +309,14 @@ QUIT
 `
 
 func TestExtensions(t *testing.T) {
-	faker := func(server string) (c *smtpClient, bcmdbuf *bufio.Writer, cmdbuf *bytes.Buffer) {
+	faker := func(server string, disabledExts []string) (c *smtpClient, bcmdbuf *bufio.Writer, cmdbuf *bytes.Buffer) {
 		server = strings.Join(strings.Split(server, "\n"), "\r\n")
 
 		cmdbuf = &bytes.Buffer{}
 		bcmdbuf = bufio.NewWriter(cmdbuf)
 		var fake faker
 		fake.ReadWriter = bufio.NewReadWriter(bufio.NewReader(strings.NewReader(server)), bcmdbuf)
-		c = &smtpClient{text: textproto.NewConn(fake), localName: "localhost"}
+		c = &smtpClient{text: textproto.NewConn(fake), localName: "localhost", disabledExts: disabledExts}
 
 		return c, bcmdbuf, cmdbuf
 	}
@@ -336,7 +334,7 @@ QUIT
 `
 		)
 
-		c, bcmdbuf, cmdbuf := faker(basicServer)
+		c, bcmdbuf, cmdbuf := faker(basicServer, nil)
 
 		if err := c.helo(); err != nil {
 			t.Fatalf("HELO failed: %s", err)
@@ -371,7 +369,7 @@ QUIT
 `
 		)
 
-		c, bcmdbuf, cmdbuf := faker(basicServer)
+		c, bcmdbuf, cmdbuf := faker(basicServer, nil)
 
 		if err := c.hi("localhost"); err != nil {
 			t.Fatalf("EHLO failed: %s", err)
@@ -412,7 +410,7 @@ QUIT
 `
 		)
 
-		c, bcmdbuf, cmdbuf := faker(basicServer)
+		c, bcmdbuf, cmdbuf := faker(basicServer, nil)
 		cmdArgs := make(map[string]string)
 
 		if err := c.hi("localhost"); err != nil {
@@ -458,7 +456,7 @@ QUIT
 `
 		)
 
-		c, bcmdbuf, cmdbuf := faker(basicServer)
+		c, bcmdbuf, cmdbuf := faker(basicServer, nil)
 
 		if err := c.hi("localhost"); err != nil {
 			t.Fatalf("EHLO failed: %s", err)
@@ -499,7 +497,7 @@ QUIT
 `
 		)
 
-		c, bcmdbuf, cmdbuf := faker(basicServer)
+		c, bcmdbuf, cmdbuf := faker(basicServer, nil)
 
 		if err := c.hi("localhost"); err != nil {
 			t.Fatalf("EHLO failed: %s", err)
@@ -541,7 +539,7 @@ QUIT
 `
 		)
 
-		c, bcmdbuf, cmdbuf := faker(basicServer)
+		c, bcmdbuf, cmdbuf := faker(basicServer, nil)
 
 		if err := c.hi("localhost"); err != nil {
 			t.Fatalf("EHLO failed: %s", err)
@@ -554,6 +552,51 @@ QUIT
 			t.Fatalf("Should support SMTPUTF8")
 		}
 		if err := c.mail("user+📧@gmail.com"); err != nil {
+			t.Fatalf("MAIL FROM failed: %s", err)
+		}
+		if err := c.quit(); err != nil {
+			t.Fatalf("QUIT failed: %s", err)
+		}
+
+		bcmdbuf.Flush()
+		actualcmds := cmdbuf.String()
+		client := strings.Join(strings.Split(basicClient, "\n"), "\r\n")
+		if client != actualcmds {
+			t.Fatalf("Got:\n%s\nExpected:\n%s", actualcmds, client)
+		}
+	})
+
+	t.Run("ehlo smtputf8 disabled by args", func(t *testing.T) {
+		const (
+			basicServer = `250-mx.google.com at your service
+250-SIZE 35651584
+250-8BITMIME
+250 SMTPUTF8
+250 Sender OK
+221 Goodbye
+`
+
+			basicClient = `EHLO localhost
+MAIL FROM:<user@gmail.com> BODY=8BITMIME
+QUIT
+`
+		)
+
+		// Pass disabled extensions as function argument
+		disabledExts := []string{"SMTPUTF8"}
+		c, bcmdbuf, cmdbuf := faker(basicServer, disabledExts)
+
+		if err := c.hi("localhost"); err != nil {
+			t.Fatalf("EHLO failed: %s", err)
+		}
+		c.didHello = true
+		if ok, _ := c.extension("8BITMIME"); !ok {
+			t.Fatalf("Should support 8BITMIME")
+		}
+		if ok, _ := c.extension("SMTPUTF8"); ok {
+			t.Fatalf("SMTPUTF8 should be disabled by function argument")
+		}
+		if err := c.mail("user@gmail.com"); err != nil {
 			t.Fatalf("MAIL FROM failed: %s", err)
 		}
 		if err := c.quit(); err != nil {
@@ -581,7 +624,7 @@ func TestNewClient(t *testing.T) {
 	}
 	var fake faker
 	fake.ReadWriter = bufio.NewReadWriter(bufio.NewReader(strings.NewReader(server)), bcmdbuf)
-	c, err := newClient(fake, "fake.host")
+	c, err := newClient(fake, "fake.host", nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v\n(after %v)", err, out())
 	}
@@ -622,7 +665,7 @@ func TestNewClient2(t *testing.T) {
 	bcmdbuf := bufio.NewWriter(&cmdbuf)
 	var fake faker
 	fake.ReadWriter = bufio.NewReadWriter(bufio.NewReader(strings.NewReader(server)), bcmdbuf)
-	c, err := newClient(fake, "fake.host")
+	c, err := newClient(fake, "fake.host", nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -693,7 +736,7 @@ func TestNewClientWithTLS(t *testing.T) {
 	}
 	defer conn.Close()
 
-	client, err := newClient(conn, ln.Addr().String())
+	client, err := newClient(conn, ln.Addr().String(), nil)
 	if err != nil {
 		t.Fatalf("smtp: newclient: %v", err)
 	}
@@ -703,7 +746,6 @@ func TestNewClientWithTLS(t *testing.T) {
 }
 
 func TestHello(t *testing.T) {
-
 	if len(helloServer) != len(helloClient) {
 		t.Fatalf("Hello server and client size mismatch")
 	}
@@ -715,7 +757,7 @@ func TestHello(t *testing.T) {
 		bcmdbuf := bufio.NewWriter(&cmdbuf)
 		var fake faker
 		fake.ReadWriter = bufio.NewReadWriter(bufio.NewReader(strings.NewReader(server)), bcmdbuf)
-		c, err := newClient(fake, "fake.host")
+		c, err := newClient(fake, "fake.host", nil)
 		if err != nil {
 			t.Fatalf("NewClient: %v", err)
 		}
@@ -836,7 +878,7 @@ func TestAuthFailed(t *testing.T) {
 	bcmdbuf := bufio.NewWriter(&cmdbuf)
 	var fake faker
 	fake.ReadWriter = bufio.NewReadWriter(bufio.NewReader(strings.NewReader(server)), bcmdbuf)
-	c, err := newClient(fake, "fake.host")
+	c, err := newClient(fake, "fake.host", nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -927,7 +969,7 @@ func dialer(addr string) (*smtpClient, error) {
 		return nil, err
 	}
 	host, _, _ := net.SplitHostPort(addr)
-	return newClient(conn, host)
+	return newClient(conn, host, nil)
 }
 
 // TLSConnectionState returns the client's TLS connection state.

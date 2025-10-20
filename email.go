@@ -64,6 +64,7 @@ type SMTPServer struct {
 	Port           int
 	KeepAlive      bool
 	TLSConfig      *tls.Config
+	DisabledExts   []string
 
 	// use custom dialer
 	CustomConn net.Conn
@@ -541,7 +542,6 @@ func (email *Email) SetDkim(options dkim.SigOptions) *Email {
 
 	msg := []byte(email.GetMessage())
 	err := dkim.Sign(&msg, options)
-
 	if err != nil {
 		email.Error = errors.New("Mail Error: cannot dkim sign message due: %s" + err.Error())
 		return email
@@ -800,7 +800,7 @@ func (email *Email) SendEnvelopeFrom(from string, client *SMTPClient) error {
 }
 
 // dial connects to the smtp server with the request encryption type
-func dial(customConn net.Conn, host string, port string, encryption Encryption, config *tls.Config) (*smtpClient, error) {
+func dial(customConn net.Conn, host string, port string, encryption Encryption, config *tls.Config, disabledExts []string) (*smtpClient, error) {
 	var conn net.Conn
 	var err error
 	var c *smtpClient
@@ -823,7 +823,7 @@ func dial(customConn net.Conn, host string, port string, encryption Encryption, 
 		}
 	}
 
-	c, err = newClient(conn, host)
+	c, err = newClient(conn, host, disabledExts)
 	if err != nil {
 		return nil, fmt.Errorf("Mail Error on smtp dial: %w", err)
 	}
@@ -833,10 +833,9 @@ func dial(customConn net.Conn, host string, port string, encryption Encryption, 
 
 // smtpConnect connects to the smtp server and starts TLS and passes auth
 // if necessary
-func smtpConnect(customConn net.Conn, host, port, helo string, encryption Encryption, config *tls.Config) (*smtpClient, error) {
+func smtpConnect(customConn net.Conn, host, port, helo string, encryption Encryption, config *tls.Config, disabledExts []string) (*smtpClient, error) {
 	// connect to the mail server
-	c, err := dial(customConn, host, port, encryption, config)
-
+	c, err := dial(customConn, host, port, encryption, config, disabledExts)
 	if err != nil {
 		return nil, err
 	}
@@ -929,7 +928,7 @@ func (server *SMTPServer) Connect() (*SMTPClient, error) {
 	if server.ConnectTimeout != 0 {
 		smtpConnectChannel = make(chan error, 2)
 		go func() {
-			c, err = smtpConnect(server.CustomConn, server.Host, fmt.Sprintf("%d", server.Port), server.Helo, server.Encryption, tlsConfig)
+			c, err = smtpConnect(server.CustomConn, server.Host, fmt.Sprintf("%d", server.Port), server.Helo, server.Encryption, tlsConfig, server.DisabledExts)
 			// send the result
 			smtpConnectChannel <- err
 		}()
@@ -944,7 +943,7 @@ func (server *SMTPServer) Connect() (*SMTPClient, error) {
 		}
 	} else {
 		// no ConnectTimeout, just fire the connect
-		c, err = smtpConnect(server.CustomConn, server.Host, fmt.Sprintf("%d", server.Port), server.Helo, server.Encryption, tlsConfig)
+		c, err = smtpConnect(server.CustomConn, server.Host, fmt.Sprintf("%d", server.Port), server.Helo, server.Encryption, tlsConfig, server.DisabledExts)
 		if err != nil {
 			return nil, err
 		}

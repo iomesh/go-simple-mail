@@ -43,18 +43,21 @@ type smtpClient struct {
 	localName  string // the name to use in HELO/EHLO
 	didHello   bool   // whether we've said HELO/EHLO
 	helloError error  // the error from the hello
+
+	// List of disabled extensions
+	disabledExts []string
 }
 
 // newClient returns a new smtpClient using an existing connection and host as a
 // server name to be used when authenticating.
-func newClient(conn net.Conn, host string) (*smtpClient, error) {
+func newClient(conn net.Conn, host string, disabledExts []string) (*smtpClient, error) {
 	text := textproto.NewConn(conn)
 	_, _, err := text.ReadResponse(220)
 	if err != nil {
 		text.Close()
 		return nil, err
 	}
-	c := &smtpClient{text: text, conn: conn, serverName: host, localName: "localhost"}
+	c := &smtpClient{text: text, conn: conn, serverName: host, localName: "localhost", disabledExts: disabledExts}
 	_, c.tls = conn.(*tls.Conn)
 	return c, nil
 }
@@ -135,6 +138,11 @@ func (c *smtpClient) ehlo() error {
 	if mechs, ok := ext["AUTH"]; ok {
 		c.a = strings.Split(mechs, " ")
 	}
+
+	for _, e := range c.disabledExts {
+		delete(ext, e)
+	}
+
 	c.ext = ext
 	return err
 }
